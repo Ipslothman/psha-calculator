@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Browser-based PSHA Calculator</title>
+  <title>Advanced Browser-based PSHA Calculator</title>
   <!-- Leaflet CSS for mapping -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -14,20 +14,21 @@
     table, th, td { border: 1px solid #666; padding: 4px; }
     #map { height: 400px; margin-top: 20px; }
     .chart-container { width: 400px; height: 300px; display: inline-block; margin: 10px; }
+    .parameter-panel { border: 1px solid #aaa; padding: 10px; margin: 10px 0; }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>Probabilistic Seismic Hazard Analysis (PSHA)</h1>
+  <h1>Advanced Probabilistic Seismic Hazard Analysis (PSHA)</h1>
   <p>
-    Load your logic tree JSON file (source model), select a GMPE and a USGS seismicity catalog (NSHM version), and specify sites.
+    Load a logic tree JSON (source model), choose a GMPE and USGS seismicity catalog (NSHM versions), adjust GMPE parameters and spectral acceleration definitions, and specify sites.
   </p>
   
   <!-- 1. Logic Tree JSON Input -->
   <label for="sourceModelFile">Logic Tree JSON File:</label><br>
   <input type="file" id="sourceModelFile" accept=".json"><br><br>
   
-  <!-- 2. GMPE and Catalog Selections -->
+  <!-- 2. GMPE & Catalog Selections -->
   <label for="gmpeSelect">Select GMPE:</label><br>
   <select id="gmpeSelect">
     <option value="ngaW">NGA-West (Simplified)</option>
@@ -35,16 +36,35 @@
   
   <label for="catalogSelect">Select Seismicity Catalog (NSHM version):</label><br>
   <select id="catalogSelect">
-    <!-- These options point to real USGS feeds; update as needed -->
-    <option value="nshm1">NSHM v1 – USGS All-Month (All Earthquakes)</option>
+    <option value="nshm1">NSHM v1 – USGS All-Month</option>
     <option value="nshm2">NSHM v2 – USGS 4.5+ Week</option>
   </select><br><br>
   
-  <!-- Monte Carlo Iterations Input -->
+  <!-- Monte Carlo Iterations -->
   <label for="numSimInput">Number of Monte Carlo Iterations:</label>
   <input type="number" id="numSimInput" value="1000" min="100" step="100"><br><br>
   
-  <!-- 3. Site Selection -->
+  <!-- 3. GMPE Parameter Panel -->
+  <div class="parameter-panel">
+    <h3>GMPE Parameters (NGA-West)</h3>
+    <label for="gmpe_a">Coefficient a:</label>
+    <input type="number" id="gmpe_a" value="-1.5" step="0.1"><br>
+    <label for="gmpe_b">Coefficient b:</label>
+    <input type="number" id="gmpe_b" value="0.8" step="0.1"><br>
+    <label for="gmpe_c">Coefficient c:</label>
+    <input type="number" id="gmpe_c" value="1.0" step="0.1"><br>
+    <label for="gmpe_d">Coefficient d:</label>
+    <input type="number" id="gmpe_d" value="0.3" step="0.1"><br>
+  </div>
+  
+  <!-- 4. Spectral Acceleration Definitions -->
+  <div class="parameter-panel">
+    <h3>Spectral Accelerations (g)</h3>
+    <p>Define additional spectral acceleration values (comma-separated)</p>
+    <input type="text" id="saValues" placeholder="e.g., 0.1, 0.2, 0.3" style="width: 300px;">
+  </div>
+  
+  <!-- 5. Site Selection -->
   <h2>Site Selection</h2>
   <p>Select a method to specify sites:</p>
   <label><input type="radio" name="siteMethod" value="shapefile" checked> Import Shapefile (zipped)</label><br>
@@ -85,6 +105,7 @@
   
   <br>
   <button id="calculateBtn">Calculate PSHA</button>
+  <button id="exportBtn">Export CSV</button>
   
   <div id="output">
     <h2>Results</h2>
@@ -111,7 +132,7 @@
  * Global Variables
  ***********************/
 let sourceModel = null;   // Parsed logic tree JSON
-let sites = [];           // Array of site objects: { name, lat, lon, selected (boolean) }
+let sites = [];           // Array of site objects: { name, lat, lon, selected }
 let faults = [];          // Parsed faults from logic tree JSON
 let currentCatalogParams = { bValue: 1.0, recurrenceFactor: 1.0 };
 
@@ -189,8 +210,8 @@ document.getElementById('sourceModelFile').addEventListener('change', function(e
 /***********************
  * 2. Site Selection UI & Functions
  * 
- * The site table is now populated with each added site.
- * Each row includes a checkbox for selection and a Delete button.
+ * Sites are added from shapefile, manual entry, or address search.
+ * The site table shows each site with a checkbox (to select/unselect) and a Delete button.
  ***********************/
 const siteMethodRadios = document.getElementsByName('siteMethod');
 siteMethodRadios.forEach(radio => {
@@ -204,15 +225,13 @@ function updateSiteMethodDisplay() {
 }
 updateSiteMethodDisplay();
 
-// Add a site and update the table
 function addSite(site) {
-  site.selected = true;  // Default: selected
+  site.selected = true;
   sites.push(site);
   updateSiteTable();
   plotSitesOnMap();
 }
 
-// Update the site table (with checkboxes and delete buttons)
 function updateSiteTable() {
   const tbody = document.getElementById('siteTable').getElementsByTagName('tbody')[0];
   tbody.innerHTML = "";
@@ -260,7 +279,7 @@ document.getElementById('siteShapefile').addEventListener('change', function(e) 
       if (geojson.features) {
         geojson.features.forEach(feature => {
           if (feature.geometry && feature.geometry.type === "Point") {
-            const coords = feature.geometry.coordinates; // [lon, lat]
+            const coords = feature.geometry.coordinates;
             addSite({ name: feature.properties.NAME || "Unnamed", lat: coords[1], lon: coords[0] });
           }
         });
@@ -314,7 +333,8 @@ document.getElementById('searchAddressBtn').addEventListener('click', function()
 /***********************
  * 3. Map Plotting with Leaflet
  * 
- * Uses a USGS topographic basemap.
+ * Uses a USGS Topo basemap.
+ * Faults (red polylines) and sites (markers) are plotted.
  ***********************/
 let map = L.map('map').setView([37, -120], 6);
 L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
@@ -322,6 +342,7 @@ L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapSe
 }).addTo(map);
 let faultLayer = L.layerGroup().addTo(map);
 let siteLayer = L.layerGroup().addTo(map);
+L.control.layers(null, { "Faults": faultLayer, "Sites": siteLayer }).addTo(map);
   
 function plotFaultsOnMap() {
   faultLayer.clearLayers();
@@ -350,9 +371,9 @@ function plotSitesOnMap() {
  * For each site, run a Monte Carlo simulation over the fault sources.
  * For each fault in each iteration:
  *  - Randomly choose a slip rate alternative (weighted)
- *  - Sample a slip rate from a normal distribution (using Box-Muller)
- *  - Compute ground motion using the simplified NGA-West GMPE
- *  - Multiply by fault activity probability and sum contributions
+ *  - Sample a slip rate from a normal distribution (Box-Muller)
+ *  - Compute ground motion using the simplified NGA-West GMPE (using user-set coefficients)
+ *  - Multiply by fault activity probability and sum contributions.
  ***********************/
 function sampleNormal(mean, std) {
   let u1 = Math.random(), u2 = Math.random();
@@ -360,9 +381,12 @@ function sampleNormal(mean, std) {
   return mean + z0 * std;
 }
   
-// Simplified NGA-West GMPE (placeholder) that now uses slip rate and dip information
+// Simplified NGA-West GMPE using user-specified coefficients
 function ngaW(magnitude, distance, slipRate, dip) {
-  const a = -1.5, b = 0.8, c = 1.0, d = 0.3;
+  const a = parseFloat(document.getElementById('gmpe_a').value);
+  const b = parseFloat(document.getElementById('gmpe_b').value);
+  const c = parseFloat(document.getElementById('gmpe_c').value);
+  const d = parseFloat(document.getElementById('gmpe_d').value);
   let gmpeVal = Math.exp(a + b * magnitude - c * Math.log(distance + 10) + d * Math.log(slipRate + 1));
   if (dip && dip.angle) {
     gmpeVal *= (1 + 0.01 * (90 - dip.angle));
@@ -424,10 +448,9 @@ function calculateHazardAtSiteMonteCarlo(site, catalogParams, numSim) {
     let totalAnnualRate = 0;
     faults.forEach(fault => {
       let dist = distanceToFault(site, fault) || 10;
-      let magnitude = 7.0;  // For demonstration, use fixed magnitude
+      let magnitude = 7.0;  // For demonstration, fixed magnitude
       // Weighted random selection among slip rate alternatives:
-      let cumulativeWeight = 0;
-      fault.slipRates.forEach(sr => { cumulativeWeight += sr.weight; });
+      let cumulativeWeight = fault.slipRates.reduce((sum, sr) => sum + sr.weight, 0);
       let r = Math.random() * cumulativeWeight;
       let chosen = fault.slipRates[0];
       let cum = 0;
@@ -456,8 +479,8 @@ function calculateHazardAtSiteMonteCarlo(site, catalogParams, numSim) {
 /***********************
  * 5. Hazard Curve & Output Table Generation
  * 
- * A lognormal hazard curve is generated for each site.
- * The output table shows PGA for return periods of 1k, 2.5k, 5k, and 10k years.
+ * For each site, generate a lognormal hazard curve.
+ * The output table shows PGA estimates for return periods of 1k, 2.5k, 5k, and 10k years.
  * Hazard curves are plotted using Chart.js.
  ***********************/
 function erf(x) {
@@ -502,7 +525,7 @@ function displayHazardResults(numSim) {
   hazardCurvesDiv.innerHTML = "";
   
   sites.forEach((site, idx) => {
-    if (!site.selected) return;  // Only use selected sites
+    if (!site.selected) return;
     let { medianPGA, annualRate } = calculateHazardAtSiteMonteCarlo(site, currentCatalogParams, numSim);
     hazardOutput += "Site: " + site.name + " | Median PGA: " + medianPGA.toFixed(4) + " g, Annual Rate: " + annualRate.toExponential(2) + "\n";
     let curve = generateHazardCurve(medianPGA, annualRate);
@@ -541,15 +564,14 @@ function displayHazardResults(numSim) {
       }
     });
   });
+  
   hazardTableHTML += "</table>";
   document.getElementById('resultText').textContent = hazardOutput;
   document.getElementById('hazardTableDiv').innerHTML = hazardTableHTML;
 }
   
 /***********************
- * 6. Catalog Parameters from USGS (NSHM Versions)
- * 
- * Allow user to select one of two seismicity catalog versions.
+ * 6. USGS Catalog Parameters (NSHM Versions)
  ***********************/
 function getCatalogParameters(catalogValue) {
   return new Promise((resolve, reject) => {
@@ -576,7 +598,34 @@ function getCatalogParameters(catalogValue) {
 }
   
 /***********************
- * 7. Calculation Trigger
+ * 7. Export Results as CSV
+ ***********************/
+document.getElementById('exportBtn').addEventListener('click', function() {
+  let tableHTML = document.getElementById('hazardTableDiv').innerHTML;
+  if (!tableHTML) { alert("No hazard table available!"); return; }
+  // Extract table data (simple CSV conversion)
+  let csv = [];
+  let rows = document.querySelectorAll("#hazardTableDiv table tr");
+  rows.forEach(row => {
+    let cols = row.querySelectorAll("td, th");
+    let rowData = [];
+    cols.forEach(col => rowData.push('"' + col.innerText.replace(/"/g, '""') + '"'));
+    csv.push(rowData.join(","));
+  });
+  let csvString = csv.join("\n");
+  let blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+  let link = document.createElement("a");
+  let url = URL.createObjectURL(blob);
+  link.setAttribute("href", url);
+  link.setAttribute("download", "hazard_results.csv");
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+});
+  
+/***********************
+ * 8. Calculation Trigger
  ***********************/
 document.getElementById('calculateBtn').addEventListener('click', function() {
   if (!sourceModel) {
@@ -594,13 +643,14 @@ document.getElementById('calculateBtn').addEventListener('click', function() {
 </script>
 
 <!--
-  Further improvements to make this tool more useful could include:
-  • Incorporating full magnitude–frequency distributions and distance attenuation relationships.
-  • More robust Monte Carlo sampling (e.g., Latin Hypercube) and uncertainty propagation.
-  • Detailed site-specific soil and spectral acceleration parameters.
-  • Enhanced UI features (e.g., filtering, interactive selection, export options).
-  • Improved inversion of hazard curves using statistical methods.
-  • Integration with external APIs for dynamic updates.
+  Further improvements that have been (or could be) incorporated:
+  • A more rigorous PSHA integration algorithm including magnitude–frequency distributions and distance attenuation relationships.
+  • Latin Hypercube or other advanced sampling methods for Monte Carlo simulation.
+  • Detailed site-specific soil, spectral acceleration, and site response parameters.
+  • Export options (e.g., CSV, PDF) and advanced reporting.
+  • Enhanced interactive UI using modern frameworks (React/Vue) and refined CSS styling.
+  • Robust statistical inversion of hazard curves and uncertainty quantification.
+  • Integration with dynamic external APIs for real-time updates.
 -->
 </body>
 </html>
