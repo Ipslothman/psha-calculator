@@ -9,12 +9,13 @@
       margin: 20px;
     }
     .container {
-      max-width: 800px;
+      max-width: 900px;
       margin: auto;
     }
     input, select, button {
       margin: 5px 0;
       padding: 5px;
+      font-size: 1em;
     }
     #output {
       border: 1px solid #ccc;
@@ -23,20 +24,22 @@
       background: #f9f9f9;
       white-space: pre-wrap;
     }
+    table { border-collapse: collapse; }
+    table, th, td { border: 1px solid #666; padding: 4px; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Probabilistic Seismic Hazard Analysis (PSHA)</h1>
     <p>
-      Load your source model (a JSON file with fault data), select a GMPE and USGS seismic catalog, and run the PSHA calculation.
+      Load your logic tree JSON file (source model), select a GMPE and USGS catalog, and specify sites using one of three methods.
     </p>
     
-    <!-- File input for the source model -->
-    <label for="sourceModelFile">Source Model File (JSON):</label><br>
+    <!-- 1. Logic Tree JSON Input -->
+    <label for="sourceModelFile">Logic Tree JSON File:</label><br>
     <input type="file" id="sourceModelFile" accept=".json"><br><br>
     
-    <!-- Select input for GMPE -->
+    <!-- 2. GMPE and USGS Catalog Selections -->
     <label for="gmpeSelect">Select GMPE:</label><br>
     <select id="gmpeSelect">
       <option value="gmpe1">GMPE 1</option>
@@ -44,13 +47,53 @@
       <option value="gmpe3">GMPE 3</option>
     </select><br><br>
     
-    <!-- Select input for USGS seismic catalog -->
     <label for="catalogSelect">Select USGS Seismic Catalog:</label><br>
     <select id="catalogSelect">
       <option value="catalog1">USGS Catalog 1</option>
       <option value="catalog2">USGS Catalog 2</option>
     </select><br><br>
     
+    <!-- 3. Site Selection -->
+    <h2>Site Selection</h2>
+    <p>Select a method to specify sites for the PSHA calculation:</p>
+    <label><input type="radio" name="siteMethod" value="shapefile" checked> Import Shapefile (zipped)</label><br>
+    <label><input type="radio" name="siteMethod" value="manual"> Manual Entry</label><br>
+    <label><input type="radio" name="siteMethod" value="search"> Search Address</label><br><br>
+    
+    <!-- Div for Shapefile Input -->
+    <div id="siteShapefileDiv">
+      <label for="siteShapefile">Select Shapefile (ZIP):</label><br>
+      <input type="file" id="siteShapefile" accept=".zip"><br><br>
+    </div>
+    
+    <!-- Div for Manual Entry -->
+    <div id="siteManualDiv" style="display: none;">
+      <h3>Manual Site Entry</h3>
+      <table id="siteTable">
+        <thead>
+          <tr>
+            <th>Site Name</th>
+            <th>Latitude</th>
+            <th>Longitude</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Rows will be added dynamically -->
+        </tbody>
+      </table>
+      <button id="addSiteBtn">Add Site</button>
+      <br><br>
+    </div>
+    
+    <!-- Div for Address Search -->
+    <div id="siteSearchDiv" style="display: none;">
+      <h3>Search Address</h3>
+      <input type="text" id="addressInput" placeholder="Enter address or location">
+      <button id="searchAddressBtn">Search</button>
+      <div id="searchResults"></div>
+    </div>
+    
+    <br>
     <button id="calculateBtn">Calculate PSHA</button>
     
     <div id="output">
@@ -59,46 +102,37 @@
     </div>
   </div>
   
+  <!-- Include shp.js for shapefile processing -->
+  <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+  
   <script>
-    // ------------------------------------------
-    // Dummy GMPE functions (replace with real equations)
-    // ------------------------------------------
-    function gmpe1(magnitude, distance, fault) {
+    // Global variables
+    let sourceModel = null;
+    let sites = []; // Array of site objects { name, lat, lon }
+
+    // --- Dummy GMPE functions (replace with actual equations) ---
+    function gmpe1(magnitude, distance) {
       return Math.exp(0.5 * magnitude - 0.03 * distance);
     }
-    
-    function gmpe2(magnitude, distance, fault) {
+    function gmpe2(magnitude, distance) {
       return Math.exp(0.45 * magnitude - 0.035 * distance);
     }
-    
-    function gmpe3(magnitude, distance, fault) {
+    function gmpe3(magnitude, distance) {
       return Math.exp(0.55 * magnitude - 0.025 * distance);
     }
-    
     const gmpeFunctions = {
       gmpe1: gmpe1,
       gmpe2: gmpe2,
       gmpe3: gmpe3
     };
-    
-    // ------------------------------------------
-    // Dummy USGS catalog parameters (replace with real parameters)
-    // ------------------------------------------
+
+    // --- Dummy USGS Catalog parameters (replace with real parameters) ---
     const usgsCatalogs = {
-      catalog1: {
-        description: "USGS Catalog 1",
-        bValue: 1.0,
-        recurrenceFactor: 1.0
-      },
-      catalog2: {
-        description: "USGS Catalog 2",
-        bValue: 0.9,
-        recurrenceFactor: 1.2
-      }
+      catalog1: { description: "USGS Catalog 1", bValue: 1.0, recurrenceFactor: 1.0 },
+      catalog2: { description: "USGS Catalog 2", bValue: 0.9, recurrenceFactor: 1.2 }
     };
-    
-    let sourceModel = null;
-    
+
+    // --- 1. Load the Logic Tree JSON (Source Model) ---
     document.getElementById('sourceModelFile').addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -106,43 +140,161 @@
       reader.onload = function(e) {
         try {
           sourceModel = JSON.parse(e.target.result);
-          document.getElementById('resultText').textContent = "Source model loaded successfully.\n";
+          document.getElementById('resultText').textContent = "Logic tree JSON loaded successfully.\n";
         } catch (error) {
-          document.getElementById('resultText').textContent = "Error parsing source model: " + error;
+          document.getElementById('resultText').textContent = "Error parsing JSON: " + error;
         }
       };
       reader.readAsText(file);
     });
-    
-    function calculatePSHA(sourceModel, gmpeFunc, catalogParams) {
+
+    // --- 2. Site Selection Method UI ---
+    const siteMethodRadios = document.getElementsByName('siteMethod');
+    siteMethodRadios.forEach(function(radio) {
+      radio.addEventListener('change', updateSiteMethodDisplay);
+    });
+    function updateSiteMethodDisplay() {
+      const selectedMethod = document.querySelector('input[name="siteMethod"]:checked').value;
+      document.getElementById('siteShapefileDiv').style.display = (selectedMethod === 'shapefile') ? 'block' : 'none';
+      document.getElementById('siteManualDiv').style.display = (selectedMethod === 'manual') ? 'block' : 'none';
+      document.getElementById('siteSearchDiv').style.display = (selectedMethod === 'search') ? 'block' : 'none';
+    }
+    updateSiteMethodDisplay();
+
+    // --- 2a. Handle Shapefile Import using shp.js ---
+    document.getElementById('siteShapefile').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        const arrayBuffer = event.target.result;
+        shp(arrayBuffer).then(function(geojson) {
+          if (geojson.features) {
+            geojson.features.forEach(function(feature) {
+              if (feature.geometry && feature.geometry.type === "Point") {
+                const coords = feature.geometry.coordinates; // [lon, lat]
+                sites.push({ name: feature.properties.NAME || "Unnamed", lat: coords[1], lon: coords[0] });
+              }
+            });
+            document.getElementById('resultText').textContent += "Imported " + geojson.features.length + " site(s) from shapefile.\n";
+          } else {
+            document.getElementById('resultText').textContent += "No point features found in shapefile.\n";
+          }
+        }).catch(function(error) {
+          document.getElementById('resultText').textContent += "Error processing shapefile: " + error + "\n";
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // --- 2b. Handle Manual Site Entry ---
+    document.getElementById('addSiteBtn').addEventListener('click', function() {
+      const siteName = prompt("Enter Site Name:");
+      if (!siteName) return;
+      const lat = parseFloat(prompt("Enter Latitude:"));
+      const lon = parseFloat(prompt("Enter Longitude:"));
+      if (isNaN(lat) || isNaN(lon)) {
+        alert("Invalid latitude or longitude.");
+        return;
+      }
+      sites.push({ name: siteName, lat: lat, lon: lon });
+      // Add new row to the table
+      const tableBody = document.getElementById('siteTable').getElementsByTagName('tbody')[0];
+      const newRow = tableBody.insertRow();
+      newRow.insertCell(0).textContent = siteName;
+      newRow.insertCell(1).textContent = lat;
+      newRow.insertCell(2).textContent = lon;
+    });
+
+    // --- 2c. Handle Address Search via Nominatim ---
+    document.getElementById('searchAddressBtn').addEventListener('click', function() {
+      const address = document.getElementById('addressInput').value;
+      if (!address) return;
+      fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(address))
+        .then(response => response.json())
+        .then(data => {
+          const resultsDiv = document.getElementById('searchResults');
+          resultsDiv.innerHTML = "";
+          if (data.length === 0) {
+            resultsDiv.textContent = "No results found.";
+            return;
+          }
+          const list = document.createElement('ul');
+          data.forEach(function(result) {
+            const listItem = document.createElement('li');
+            listItem.textContent = result.display_name + " (Lat: " + result.lat + ", Lon: " + result.lon + ")";
+            listItem.style.cursor = "pointer";
+            listItem.addEventListener('click', function() {
+              sites.push({ name: result.display_name, lat: parseFloat(result.lat), lon: parseFloat(result.lon) });
+              resultsDiv.innerHTML += "Added site: " + result.display_name + "<br>";
+            });
+            list.appendChild(listItem);
+          });
+          resultsDiv.appendChild(list);
+        })
+        .catch(error => {
+          document.getElementById('searchResults').textContent = "Error: " + error;
+        });
+    });
+
+    // --- Utility: Haversine Distance Calculation ---
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      function toRad(x) {
+        return x * Math.PI / 180;
+      }
+      const R = 6371; // Earth radius in kilometers
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    // --- PSHA Calculation for Sites ---
+    function calculatePSHAForSites(sourceModel, gmpeFunc, catalogParams, sites) {
       let results = "";
       if (!sourceModel || !sourceModel.faults) {
-        return "Invalid source model. Please check your file.";
+        return "Invalid logic tree JSON. Please check your file.";
       }
-      sourceModel.faults.forEach(function(fault) {
-        const magnitude = fault.magnitude || 6.5;
-        const distance = fault.distance || 10;
-        const groundMotion = gmpeFunc(magnitude, distance, fault);
-        const annualRate = catalogParams.recurrenceFactor * Math.pow(10, -catalogParams.bValue * magnitude);
-        results += "Fault: " + (fault.FaultID || "Unknown") + "\n";
-        results += "  Magnitude: " + magnitude.toFixed(2) + "\n";
-        results += "  Distance: " + distance.toFixed(2) + " km\n";
-        results += "  GMPE (" + gmpeFunc.name + ") Ground Motion: " + groundMotion.toFixed(4) + "\n";
-        results += "  Annual Occurrence Rate: " + annualRate.toExponential(2) + "\n\n";
+      if (sites.length === 0) {
+        return "No sites selected. Please add sites using one of the methods.";
+      }
+      sites.forEach(function(site) {
+        results += "Site: " + site.name + " (Lat: " + site.lat + ", Lon: " + site.lon + ")\n";
+        sourceModel.faults.forEach(function(fault) {
+          // Assume each fault has a 'location' property with 'lat' and 'lon'
+          let distance = 10; // default distance if no location provided
+          if (fault.location && fault.location.lat && fault.location.lon) {
+            distance = haversineDistance(site.lat, site.lon, fault.location.lat, fault.location.lon);
+          }
+          const magnitude = fault.magnitude || 6.5;
+          const groundMotion = gmpeFunc(magnitude, distance);
+          const annualRate = catalogParams.recurrenceFactor * Math.pow(10, -catalogParams.bValue * magnitude);
+          results += "  Fault: " + (fault.FaultID || "Unknown") + "\n";
+          results += "    Magnitude: " + magnitude.toFixed(2) + "\n";
+          results += "    Distance: " + distance.toFixed(2) + " km\n";
+          results += "    GMPE (" + gmpeFunc.name + ") Ground Motion: " + groundMotion.toFixed(4) + "\n";
+          results += "    Annual Occurrence Rate: " + annualRate.toExponential(2) + "\n";
+        });
+        results += "\n";
       });
       return results;
     }
-    
+
+    // --- Handler for the "Calculate PSHA" button ---
     document.getElementById('calculateBtn').addEventListener('click', function() {
       if (!sourceModel) {
-        document.getElementById('resultText').textContent = "Please load a source model file first.";
+        document.getElementById('resultText').textContent = "Please load a logic tree JSON file first.";
         return;
       }
       const selectedGMPE = document.getElementById('gmpeSelect').value;
       const selectedCatalog = document.getElementById('catalogSelect').value;
       const gmpeFunc = gmpeFunctions[selectedGMPE];
       const catalogParams = usgsCatalogs[selectedCatalog];
-      const results = calculatePSHA(sourceModel, gmpeFunc, catalogParams);
+      
+      const results = calculatePSHAForSites(sourceModel, gmpeFunc, catalogParams, sites);
       document.getElementById('resultText').textContent = results;
     });
   </script>
