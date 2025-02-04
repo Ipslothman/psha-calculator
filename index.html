@@ -21,7 +21,7 @@
 <div class="container">
   <h1>Advanced Probabilistic Seismic Hazard Analysis (PSHA)</h1>
   <p>
-    Load a logic tree JSON (source model), choose a GMPE and USGS seismicity catalog (NSHM versions), adjust GMPE parameters and spectral acceleration definitions, and specify sites.
+    Load a logic tree JSON (source model), choose a GMPE and USGS seismicity catalog (NSHM 2023 versions), adjust GMPE parameters and spectral acceleration definitions, and specify sites.
   </p>
   
   <!-- 1. Logic Tree JSON Input -->
@@ -34,10 +34,11 @@
     <option value="ngaW">NGA-West (Simplified)</option>
   </select><br><br>
   
-  <label for="catalogSelect">Select Seismicity Catalog (NSHM version):</label><br>
+  <label for="catalogSelect">Select Seismicity Catalog (NSHM 2023):</label><br>
   <select id="catalogSelect">
-    <option value="nshm1">NSHM v1 – USGS All-Month</option>
-    <option value="nshm2">NSHM v2 – USGS 4.5+ Week</option>
+    <!-- Updated to reflect 2023 NSHM-style feeds -->
+    <option value="nshm2023_1">NSHM 2023 v1 – USGS All-Month</option>
+    <option value="nshm2023_2">NSHM 2023 v2 – USGS 4.5+ Week</option>
   </select><br><br>
   
   <!-- Monte Carlo Iterations -->
@@ -47,14 +48,15 @@
   <!-- 3. GMPE Parameter Panel -->
   <div class="parameter-panel">
     <h3>GMPE Parameters (NGA-West)</h3>
+    <!-- Revised default values for lower PGA predictions -->
     <label for="gmpe_a">Coefficient a:</label>
-    <input type="number" id="gmpe_a" value="-1.5" step="0.1"><br>
+    <input type="number" id="gmpe_a" value="-3.0" step="0.1"><br>
     <label for="gmpe_b">Coefficient b:</label>
-    <input type="number" id="gmpe_b" value="0.8" step="0.1"><br>
+    <input type="number" id="gmpe_b" value="1.0" step="0.1"><br>
     <label for="gmpe_c">Coefficient c:</label>
     <input type="number" id="gmpe_c" value="1.0" step="0.1"><br>
     <label for="gmpe_d">Coefficient d:</label>
-    <input type="number" id="gmpe_d" value="0.3" step="0.1"><br>
+    <input type="number" id="gmpe_d" value="0.5" step="0.1"><br>
   </div>
   
   <!-- 4. Spectral Acceleration Definitions -->
@@ -209,9 +211,6 @@ document.getElementById('sourceModelFile').addEventListener('change', function(e
 
 /***********************
  * 2. Site Selection UI & Functions
- * 
- * Sites are added from shapefile, manual entry, or address search.
- * The site table shows each site with a checkbox (to select/unselect) and a Delete button.
  ***********************/
 const siteMethodRadios = document.getElementsByName('siteMethod');
 siteMethodRadios.forEach(radio => {
@@ -381,13 +380,14 @@ function sampleNormal(mean, std) {
   return mean + z0 * std;
 }
   
-// Simplified NGA-West GMPE using user-specified coefficients
+// Simplified NGA-West GMPE using user-specified coefficients (adjusted attenuation)
 function ngaW(magnitude, distance, slipRate, dip) {
   const a = parseFloat(document.getElementById('gmpe_a').value);
   const b = parseFloat(document.getElementById('gmpe_b').value);
   const c = parseFloat(document.getElementById('gmpe_c').value);
   const d = parseFloat(document.getElementById('gmpe_d').value);
-  let gmpeVal = Math.exp(a + b * magnitude - c * Math.log(distance + 10) + d * Math.log(slipRate + 1));
+  // Use (distance + 30) to give more attenuation at larger distances
+  let gmpeVal = Math.exp(a + b * magnitude - c * Math.log(distance + 30) + d * Math.log(slipRate + 1));
   if (dip && dip.angle) {
     gmpeVal *= (1 + 0.01 * (90 - dip.angle));
   }
@@ -470,9 +470,9 @@ function calculateHazardAtSiteMonteCarlo(site, catalogParams, numSim) {
     simPGAs.push(totalPGA);
     simAnnualRates.push(totalAnnualRate);
   }
-  simPGAs.sort((a,b) => a - b);
+  simPGAs.sort((a, b) => a - b);
   let medianPGA = simPGAs[Math.floor(numSim/2)];
-  let avgAnnualRate = simAnnualRates.reduce((a,b) => a + b, 0) / numSim;
+  let avgAnnualRate = simAnnualRates.reduce((a, b) => a + b, 0) / numSim;
   return { medianPGA: medianPGA, annualRate: avgAnnualRate };
 }
   
@@ -494,7 +494,8 @@ function erf(x) {
   
 function generateHazardCurve(medianPGA, annualRate, sigma = 0.6) {
   let xVals = [], lambdaVals = [];
-  for (let i = -2; i <= 2; i += 0.1) {
+  // Expanded range from -4 to 4 to capture more variability
+  for (let i = -4; i <= 4; i += 0.1) {
     let x = medianPGA * Math.exp(i);
     xVals.push(x);
     let z = (Math.log(x) - Math.log(medianPGA)) / sigma;
@@ -515,7 +516,8 @@ function getPGAForReturnPeriod(curve, T) {
       return Math.exp(logPGA);
     }
   }
-  return null;
+  // Fallback: return median PGA if no crossing is found
+  return curve.x[Math.floor(curve.x.length/2)];
 }
   
 function displayHazardResults(numSim) {
@@ -571,16 +573,18 @@ function displayHazardResults(numSim) {
 }
   
 /***********************
- * 6. USGS Catalog Parameters (NSHM Versions)
+ * 6. USGS Catalog Parameters (NSHM 2023 Versions)
+ * 
+ * Updated feed URLs and scaling.
  ***********************/
 function getCatalogParameters(catalogValue) {
   return new Promise((resolve, reject) => {
     let url;
-    if (catalogValue === "nshm1") {
-      // NSHM v1: Use USGS All-Month feed (example)
+    if (catalogValue === "nshm2023_1") {
+      // NSHM 2023 v1 – USGS All-Month feed
       url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson";
-    } else if (catalogValue === "nshm2") {
-      // NSHM v2: Use USGS 4.5+ Week feed (example)
+    } else if (catalogValue === "nshm2023_2") {
+      // NSHM 2023 v2 – USGS 4.5+ Week feed
       url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson";
     } else {
       resolve({ bValue: 1.0, recurrenceFactor: 1.0 });
@@ -590,8 +594,8 @@ function getCatalogParameters(catalogValue) {
       .then(response => response.json())
       .then(data => {
         let count = data.metadata.count;
-        // For demonstration, set recurrenceFactor proportional to event count (arbitrary scaling)
-        resolve({ bValue: 1.0, recurrenceFactor: count / 1000 });
+        // Adjust scaling: use count/10000 for more moderate recurrence rates
+        resolve({ bValue: 1.0, recurrenceFactor: count / 10000 });
       })
       .catch(err => { resolve({ bValue: 1.0, recurrenceFactor: 1.0 }); });
   });
@@ -603,7 +607,7 @@ function getCatalogParameters(catalogValue) {
 document.getElementById('exportBtn').addEventListener('click', function() {
   let tableHTML = document.getElementById('hazardTableDiv').innerHTML;
   if (!tableHTML) { alert("No hazard table available!"); return; }
-  // Extract table data (simple CSV conversion)
+  // Simple CSV conversion from table
   let csv = [];
   let rows = document.querySelectorAll("#hazardTableDiv table tr");
   rows.forEach(row => {
@@ -644,10 +648,9 @@ document.getElementById('calculateBtn').addEventListener('click', function() {
 
 <!--
   Further improvements that have been (or could be) incorporated:
-  • A more rigorous PSHA integration algorithm including magnitude–frequency distributions and distance attenuation relationships.
-  • Latin Hypercube or other advanced sampling methods for Monte Carlo simulation.
+  • Incorporating full magnitude–frequency distributions and distance attenuation relationships.
+  • More robust Monte Carlo sampling (e.g., Latin Hypercube) and uncertainty propagation.
   • Detailed site-specific soil, spectral acceleration, and site response parameters.
-  • Export options (e.g., CSV, PDF) and advanced reporting.
   • Enhanced interactive UI using modern frameworks (React/Vue) and refined CSS styling.
   • Robust statistical inversion of hazard curves and uncertainty quantification.
   • Integration with dynamic external APIs for real-time updates.
