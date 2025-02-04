@@ -3,379 +3,532 @@
 <head>
   <meta charset="utf-8">
   <title>Browser-based PSHA Calculator</title>
+  <!-- Leaflet CSS for mapping -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
-    .container { max-width: 900px; margin: auto; }
+    .container { max-width: 1200px; margin: auto; }
     input, select, button { margin: 5px 0; padding: 5px; font-size: 1em; }
     #output { border: 1px solid #ccc; padding: 10px; margin-top: 20px; background: #f9f9f9; white-space: pre-wrap; }
-    table { border-collapse: collapse; }
+    table { border-collapse: collapse; margin-top: 10px; }
     table, th, td { border: 1px solid #666; padding: 4px; }
+    #map { height: 400px; margin-top: 20px; }
+    .chart-container { width: 400px; height: 300px; display: inline-block; margin: 10px; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Probabilistic Seismic Hazard Analysis (PSHA)</h1>
-    <p>
-      Load your logic tree JSON file (source model), select a GMPE and USGS catalog, and specify sites using one of three methods.
-    </p>
-    
-    <!-- 1. Logic Tree JSON Input -->
-    <label for="sourceModelFile">Logic Tree JSON File:</label><br>
-    <input type="file" id="sourceModelFile" accept=".json"><br><br>
-    
-    <!-- 2. GMPE and USGS Catalog Selections -->
-    <label for="gmpeSelect">Select GMPE:</label><br>
-    <select id="gmpeSelect">
-      <option value="ngaW">NGA-W</option>
-    </select><br><br>
-    
-    <label for="catalogSelect">Select USGS Seismic Catalog:</label><br>
-    <select id="catalogSelect">
-      <option value="catalog1">USGS All Month (All Earthquakes)</option>
-      <option value="catalog2">USGS 4.5+ Week</option>
-    </select><br><br>
-    
-    <!-- 3. Site Selection -->
-    <h2>Site Selection</h2>
-    <p>Select a method to specify sites for the PSHA calculation:</p>
-    <label><input type="radio" name="siteMethod" value="shapefile" checked> Import Shapefile (zipped)</label><br>
-    <label><input type="radio" name="siteMethod" value="manual"> Manual Entry</label><br>
-    <label><input type="radio" name="siteMethod" value="search"> Search Address</label><br><br>
-    
-    <!-- Div for Shapefile Input -->
-    <div id="siteShapefileDiv">
-      <label for="siteShapefile">Select Shapefile (ZIP):</label><br>
-      <input type="file" id="siteShapefile" accept=".zip"><br><br>
-    </div>
-    
-    <!-- Div for Manual Entry -->
-    <div id="siteManualDiv" style="display: none;">
-      <h3>Manual Site Entry</h3>
-      <table id="siteTable">
-        <thead>
-          <tr>
-            <th>Site Name</th>
-            <th>Latitude</th>
-            <th>Longitude</th>
-          </tr>
-        </thead>
-        <tbody>
-          <!-- Rows will be added dynamically -->
-        </tbody>
-      </table>
-      <button id="addSiteBtn">Add Site</button>
-      <br><br>
-    </div>
-    
-    <!-- Div for Address Search -->
-    <div id="siteSearchDiv" style="display: none;">
-      <h3>Search Address</h3>
-      <input type="text" id="addressInput" placeholder="Enter address or location">
-      <button id="searchAddressBtn">Search</button>
-      <div id="searchResults"></div>
-    </div>
-    
-    <br>
-    <button id="calculateBtn">Calculate PSHA</button>
-    
-    <div id="output">
-      <h2>Results</h2>
-      <div id="resultText">No results yet.</div>
-    </div>
+<div class="container">
+  <h1>Probabilistic Seismic Hazard Analysis (PSHA)</h1>
+  <p>
+    Load your logic tree JSON file (source model), select a GMPE and USGS catalog, and specify sites using one of three methods.
+  </p>
+  
+  <!-- 1. Logic Tree JSON Input -->
+  <label for="sourceModelFile">Logic Tree JSON File:</label><br>
+  <input type="file" id="sourceModelFile" accept=".json"><br><br>
+  
+  <!-- 2. GMPE and USGS Catalog Selections -->
+  <label for="gmpeSelect">Select GMPE:</label><br>
+  <select id="gmpeSelect">
+    <option value="ngaW">NGA-W</option>
+  </select><br><br>
+  
+  <label for="catalogSelect">Select USGS Seismic Catalog:</label><br>
+  <select id="catalogSelect">
+    <option value="catalog1">USGS All Month (All Earthquakes)</option>
+    <option value="catalog2">USGS 4.5+ Week</option>
+  </select><br><br>
+  
+  <!-- 3. Site Selection -->
+  <h2>Site Selection</h2>
+  <p>Select a method to specify sites for the PSHA calculation:</p>
+  <label><input type="radio" name="siteMethod" value="shapefile" checked> Import Shapefile (zipped)</label><br>
+  <label><input type="radio" name="siteMethod" value="manual"> Manual Entry</label><br>
+  <label><input type="radio" name="siteMethod" value="search"> Search Address</label><br><br>
+  
+  <!-- Div for Shapefile Input -->
+  <div id="siteShapefileDiv">
+    <label for="siteShapefile">Select Shapefile (ZIP):</label><br>
+    <input type="file" id="siteShapefile" accept=".zip"><br><br>
   </div>
   
-  <!-- Include shp.js for shapefile processing -->
-  <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+  <!-- Div for Manual Entry -->
+  <div id="siteManualDiv" style="display: none;">
+    <h3>Manual Site Entry</h3>
+    <table id="siteTable">
+      <thead>
+        <tr><th>Site Name</th><th>Latitude</th><th>Longitude</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <button id="addSiteBtn">Add Site</button><br><br>
+  </div>
   
-  <script>
-    // Global variables
-    let sourceModel = null;
-    let sites = []; // Array of site objects { name, lat, lon }
-    
-    // --- Real GMPE: NGA-West (simplified placeholder) ---
-    function ngaW(magnitude, distance, slipRate) {
-      // Simplified NGA-West2 equation (placeholder coefficients)
-      const a = -1.5, b = 0.8, c = 1.0, d = 0.3;
-      let avgSlip = slipRate || 1;
-      let logPGA = a + b * magnitude - c * Math.log10(distance + 10) + d * Math.log10(avgSlip);
-      return Math.pow(10, logPGA); // Ground motion in g
-    }
-    const gmpeFunctions = {
-      ngaW: ngaW
+  <!-- Div for Address Search -->
+  <div id="siteSearchDiv" style="display: none;">
+    <h3>Search Address</h3>
+    <input type="text" id="addressInput" placeholder="Enter address or location">
+    <button id="searchAddressBtn">Search</button>
+    <div id="searchResults"></div>
+  </div>
+  
+  <br>
+  <button id="calculateBtn">Calculate PSHA</button>
+  
+  <div id="output">
+    <h2>Results</h2>
+    <div id="resultText">No results yet.</div>
+    <h3>Hazard Output Table</h3>
+    <div id="hazardTableDiv"></div>
+    <h3>Hazard Curves</h3>
+    <div id="hazardCurvesDiv"></div>
+  </div>
+  
+  <h2>Map</h2>
+  <div id="map"></div>
+</div>
+
+<!-- Include Leaflet JS for mapping -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<!-- Include Chart.js for plotting hazard curves -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- Include shp.js for shapefile processing -->
+<script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+
+<script>
+  /***********************
+   * Global Variables
+   ***********************/
+  let sourceModel = null;
+  let sites = [];      // Array of site objects: { name, lat, lon }
+  let faults = [];     // Parsed faults from logic tree JSON
+  let currentCatalogParams = { bValue: 1.0, recurrenceFactor: 1.0 };
+
+  /***********************
+   * 1. Logic Tree JSON Parsing
+   *
+   * The parseFault() function extracts the fault geometry,
+   * slip rate alternatives (with uncertainties and weights),
+   * dip information, and activity probability.
+   ***********************/
+  function parseFault(fault) {
+    let faultObj = {
+      name: fault.name,
+      geometry: fault.geometry,  // Expected to be a LineString
+      activityProb: 1,
+      slipRates: [],  // Array of { value, uncertainty, weight }
+      dip: null       // { angle, direction, weight }
     };
-    
-    // --- Get USGS Catalog Parameters from real USGS feeds ---
-    function getCatalogParameters(catalogValue) {
-      return new Promise((resolve, reject) => {
-        let url;
-        if (catalogValue === "catalog1") {
-          url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson";
-        } else if (catalogValue === "catalog2") {
-          url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson";
-        } else {
-          resolve({ bValue: 1.0, recurrenceFactor: 1.0 });
-          return;
-        }
-        fetch(url)
-          .then(response => response.json())
-          .then(data => {
-             let count = data.metadata.count;
-             // For demonstration, set recurrenceFactor proportional to event count (arbitrary scaling)
-             resolve({ bValue: 1.0, recurrenceFactor: count / 1000 });
-          })
-          .catch(err => {
-             resolve({ bValue: 1.0, recurrenceFactor: 1.0 });
-          });
-      });
-    }
-    
-    // --- Parse the Logic Tree JSON (Source Model) ---
-    // This function extracts fault geometry, slip rate, and dip information.
-    function parseFault(fault) {
-      let faultObj = {
-        name: fault.name,
-        geometry: fault.geometry,  // Contains the LineString with coordinates
-        active: null,
-        slipRate: { min: null, max: null },
-        dip: { angle: null, direction: null }
-      };
-      fault.children.forEach(child => {
-        if (child.type === "active") {
-          faultObj.active = true;
-        } else if (child.type === "inactive") {
-          faultObj.active = false;
-        } else if (child.name === "Slip Rate" && child.children) {
-          child.children.forEach(sr => {
-            if (sr.type === "minSlip") {
-              faultObj.slipRate.min = sr.value;
-            } else if (sr.type === "maxSlip") {
-              faultObj.slipRate.max = sr.value;
-            }
-          });
-        } else if (child.name === "Dip" && child.children) {
-          child.children.forEach(d => {
-            if (d.type === "angle") {
-              faultObj.dip.angle = d.value;
-            } else if (d.type === "direction") {
-              faultObj.dip.direction = d.value;
-            }
-          });
-        }
-      });
-      return faultObj;
-    }
-    
-    document.getElementById('sourceModelFile').addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        try {
-          const rawData = JSON.parse(e.target.result);
-          if (rawData.children && Array.isArray(rawData.children)) {
-            let faults = [];
-            rawData.children.forEach(fault => {
-              if (fault.type === "fault") {
-                faults.push(parseFault(fault));
-              }
-            });
-            rawData.faults = faults;
-            sourceModel = rawData;
-            document.getElementById('resultText').textContent = "Logic tree JSON loaded successfully with " + faults.length + " faults.\n";
-          } else {
-            document.getElementById('resultText').textContent = "Invalid JSON structure: Missing 'children' array.";
-          }
-        } catch (error) {
-          document.getElementById('resultText').textContent = "Error parsing JSON: " + error;
-        }
-      };
-      reader.readAsText(file);
-    });
-    
-    // --- 2. Site Selection Method UI ---
-    const siteMethodRadios = document.getElementsByName('siteMethod');
-    siteMethodRadios.forEach(function(radio) {
-      radio.addEventListener('change', updateSiteMethodDisplay);
-    });
-    function updateSiteMethodDisplay() {
-      const selectedMethod = document.querySelector('input[name="siteMethod"]:checked').value;
-      document.getElementById('siteShapefileDiv').style.display = (selectedMethod === 'shapefile') ? 'block' : 'none';
-      document.getElementById('siteManualDiv').style.display = (selectedMethod === 'manual') ? 'block' : 'none';
-      document.getElementById('siteSearchDiv').style.display = (selectedMethod === 'search') ? 'block' : 'none';
-    }
-    updateSiteMethodDisplay();
-    
-    // --- 2a. Handle Shapefile Import using shp.js ---
-    document.getElementById('siteShapefile').addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = function(event) {
-        const arrayBuffer = event.target.result;
-        shp(arrayBuffer).then(function(geojson) {
-          if (geojson.features) {
-            geojson.features.forEach(function(feature) {
-              if (feature.geometry && feature.geometry.type === "Point") {
-                const coords = feature.geometry.coordinates; // [lon, lat]
-                sites.push({ name: feature.properties.NAME || "Unnamed", lat: coords[1], lon: coords[0] });
-              }
-            });
-            document.getElementById('resultText').textContent += "Imported " + geojson.features.length + " site(s) from shapefile.\n";
-          } else {
-            document.getElementById('resultText').textContent += "No point features found in shapefile.\n";
-          }
-        }).catch(function(error) {
-          document.getElementById('resultText').textContent += "Error processing shapefile: " + error + "\n";
+    let activeWeight = 0, inactiveWeight = 0;
+    fault.children.forEach(child => {
+      if(child.type === "active") {
+        activeWeight = child.weight;
+      } else if(child.type === "inactive") {
+        inactiveWeight = child.weight;
+      } else if(child.name === "Slip Rate" && child.children) {
+        child.children.forEach(sr => {
+          faultObj.slipRates.push({ value: sr.value, uncertainty: sr.uncertainty, weight: sr.weight });
         });
-      };
-      reader.readAsArrayBuffer(file);
+      } else if(child.name === "Dip" && child.children) {
+        let dipObj = {};
+        child.children.forEach(d => {
+          if(d.type === "angle") {
+            dipObj.angle = d.value;
+            dipObj.weight = d.weight;
+          } else if(d.type === "direction") {
+            dipObj.direction = d.value;
+          }
+        });
+        faultObj.dip = dipObj;
+      }
     });
-    
-    // --- 2b. Handle Manual Site Entry ---
-    document.getElementById('addSiteBtn').addEventListener('click', function() {
-      const siteName = prompt("Enter Site Name:");
-      if (!siteName) return;
-      const lat = parseFloat(prompt("Enter Latitude:"));
-      const lon = parseFloat(prompt("Enter Longitude:"));
-      if (isNaN(lat) || isNaN(lon)) {
-        alert("Invalid latitude or longitude.");
+    let totalActivity = activeWeight + inactiveWeight;
+    faultObj.activityProb = totalActivity > 0 ? activeWeight / totalActivity : 1;
+    return faultObj;
+  }
+  
+  document.getElementById('sourceModelFile').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const rawData = JSON.parse(e.target.result);
+        if (rawData.children && Array.isArray(rawData.children)) {
+          faults = [];
+          rawData.children.forEach(f => {
+            if (f.type === "fault") {
+              faults.push(parseFault(f));
+            }
+          });
+          rawData.faults = faults; // Attach for later use
+          sourceModel = rawData;
+          document.getElementById('resultText').textContent = "Loaded logic tree JSON with " + faults.length + " faults.\n";
+          plotFaultsOnMap();
+        } else {
+          document.getElementById('resultText').textContent = "Invalid JSON structure: Missing 'children' array.";
+        }
+      } catch (error) {
+        document.getElementById('resultText').textContent = "Error parsing JSON: " + error;
+      }
+    };
+    reader.readAsText(file);
+  });
+  
+  /***********************
+   * 2. Site Selection UI & Functions
+   ***********************/
+  const siteMethodRadios = document.getElementsByName('siteMethod');
+  siteMethodRadios.forEach(radio => {
+    radio.addEventListener('change', updateSiteMethodDisplay);
+  });
+  function updateSiteMethodDisplay() {
+    const method = document.querySelector('input[name="siteMethod"]:checked').value;
+    document.getElementById('siteShapefileDiv').style.display = (method === 'shapefile') ? 'block' : 'none';
+    document.getElementById('siteManualDiv').style.display = (method === 'manual') ? 'block' : 'none';
+    document.getElementById('siteSearchDiv').style.display = (method === 'search') ? 'block' : 'none';
+  }
+  updateSiteMethodDisplay();
+  
+  // 2a. Shapefile Import using shp.js
+  document.getElementById('siteShapefile').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(event) {
+      const arrayBuffer = event.target.result;
+      shp(arrayBuffer).then(geojson => {
+        if (geojson.features) {
+          geojson.features.forEach(feature => {
+            if (feature.geometry && feature.geometry.type === "Point") {
+              const coords = feature.geometry.coordinates; // [lon, lat]
+              addSite({ name: feature.properties.NAME || "Unnamed", lat: coords[1], lon: coords[0] });
+            }
+          });
+          document.getElementById('resultText').textContent += "Imported " + geojson.features.length + " site(s) from shapefile.\n";
+        } else {
+          document.getElementById('resultText').textContent += "No point features found in shapefile.\n";
+        }
+      }).catch(error => {
+        document.getElementById('resultText').textContent += "Error processing shapefile: " + error + "\n";
+      });
+    };
+    reader.readAsArrayBuffer(file);
+  });
+  
+  // 2b. Manual Site Entry
+  document.getElementById('addSiteBtn').addEventListener('click', function() {
+    const name = prompt("Enter Site Name:");
+    if (!name) return;
+    const lat = parseFloat(prompt("Enter Latitude:"));
+    const lon = parseFloat(prompt("Enter Longitude:"));
+    if (isNaN(lat) || isNaN(lon)) { alert("Invalid latitude or longitude."); return; }
+    addSite({ name: name, lat: lat, lon: lon });
+  });
+  
+  // 2c. Address Search (allows multiple addresses)
+  document.getElementById('searchAddressBtn').addEventListener('click', function() {
+    const address = document.getElementById('addressInput').value;
+    if (!address) return;
+    fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(address))
+      .then(response => response.json())
+      .then(data => {
+        const resultsDiv = document.getElementById('searchResults');
+        resultsDiv.innerHTML = "";
+        if (data.length === 0) { resultsDiv.textContent = "No results found."; return; }
+        const list = document.createElement('ul');
+        data.forEach(result => {
+          const item = document.createElement('li');
+          item.textContent = result.display_name + " (Lat: " + result.lat + ", Lon: " + result.lon + ")";
+          item.style.cursor = "pointer";
+          item.addEventListener('click', function() {
+            addSite({ name: result.display_name, lat: parseFloat(result.lat), lon: parseFloat(result.lon) });
+            resultsDiv.innerHTML += "Added site: " + result.display_name + "<br>";
+          });
+          list.appendChild(item);
+        });
+        resultsDiv.appendChild(list);
+      })
+      .catch(error => { document.getElementById('searchResults').textContent = "Error: " + error; });
+  });
+  
+  function addSite(site) {
+    sites.push(site);
+    // Also add to the manual entry table:
+    const tbody = document.getElementById('siteTable').getElementsByTagName('tbody')[0];
+    const row = tbody.insertRow();
+    row.insertCell(0).textContent = site.name;
+    row.insertCell(1).textContent = site.lat;
+    row.insertCell(2).textContent = site.lon;
+    plotSitesOnMap();
+  }
+  
+  /***********************
+   * 3. Map Plotting with Leaflet
+   ***********************/
+  let map = L.map('map').setView([37, -120], 6);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+  let faultLayer = L.layerGroup().addTo(map);
+  let siteLayer = L.layerGroup().addTo(map);
+  
+  function plotFaultsOnMap() {
+    faultLayer.clearLayers();
+    faults.forEach(fault => {
+      if (fault.geometry && fault.geometry.coordinates) {
+        let latlngs = fault.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        let polyline = L.polyline(latlngs, { color: 'red' }).addTo(faultLayer);
+        polyline.bindPopup("Fault: " + fault.name);
+      }
+    });
+  }
+  
+  function plotSitesOnMap() {
+    siteLayer.clearLayers();
+    sites.forEach(site => {
+      let marker = L.marker([site.lat, site.lon]).addTo(siteLayer);
+      marker.bindPopup("Site: " + site.name);
+    });
+  }
+  
+  /***********************
+   * 4. Hazard Calculations
+   *
+   * – Uses a simplified NGA-West GMPE (with placeholder coefficients)
+   * – Iterates over each fault’s slip rate alternatives (weighted) and multiplies by the fault’s activity probability.
+   * – Combines contributions from all faults.
+   ***********************/
+  function ngaW(magnitude, distance, slipRate, dip) {
+    // Simplified NGA-West model (placeholder coefficients)
+    const a = -1.5, b = 0.8, c = 1.0, d = 0.3;
+    let gmpeVal = Math.exp(a + b * magnitude - c * Math.log(distance + 10) + d * Math.log(slipRate));
+    // Optional adjustment for dip: faults with lower dip angles may produce higher ground motion.
+    if (dip && dip.angle) {
+      gmpeVal *= (1 + 0.01 * (90 - dip.angle));
+    }
+    return gmpeVal; // in g
+  }
+  const gmpeFunctions = { ngaW: ngaW };
+  
+  // --- Get USGS Catalog Parameters from real feeds ---
+  function getCatalogParameters(catalogValue) {
+    return new Promise((resolve, reject) => {
+      let url;
+      if (catalogValue === "catalog1") {
+        url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson";
+      } else if (catalogValue === "catalog2") {
+        url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson";
+      } else {
+        resolve({ bValue: 1.0, recurrenceFactor: 1.0 });
         return;
       }
-      sites.push({ name: siteName, lat: lat, lon: lon });
-      const tableBody = document.getElementById('siteTable').getElementsByTagName('tbody')[0];
-      const newRow = tableBody.insertRow();
-      newRow.insertCell(0).textContent = siteName;
-      newRow.insertCell(1).textContent = lat;
-      newRow.insertCell(2).textContent = lon;
-    });
-    
-    // --- 2c. Handle Address Search via Nominatim ---
-    document.getElementById('searchAddressBtn').addEventListener('click', function() {
-      const address = document.getElementById('addressInput').value;
-      if (!address) return;
-      fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(address))
+      fetch(url)
         .then(response => response.json())
         .then(data => {
-          const resultsDiv = document.getElementById('searchResults');
-          resultsDiv.innerHTML = "";
-          if (data.length === 0) {
-            resultsDiv.textContent = "No results found.";
-            return;
-          }
-          const list = document.createElement('ul');
-          data.forEach(function(result) {
-            const listItem = document.createElement('li');
-            listItem.textContent = result.display_name + " (Lat: " + result.lat + ", Lon: " + result.lon + ")";
-            listItem.style.cursor = "pointer";
-            listItem.addEventListener('click', function() {
-              sites.push({ name: result.display_name, lat: parseFloat(result.lat), lon: parseFloat(result.lon) });
-              resultsDiv.innerHTML += "Added site: " + result.display_name + "<br>";
-            });
-            list.appendChild(listItem);
-          });
-          resultsDiv.appendChild(list);
+          let count = data.metadata.count;
+          // For demonstration, set recurrenceFactor proportional to event count (arbitrary scaling)
+          resolve({ bValue: 1.0, recurrenceFactor: count / 1000 });
         })
-        .catch(error => {
-          document.getElementById('searchResults').textContent = "Error: " + error;
+        .catch(err => {
+          resolve({ bValue: 1.0, recurrenceFactor: 1.0 });
         });
     });
-    
-    // --- Utility: Haversine Distance Calculation ---
-    function haversineDistance(lat1, lon1, lat2, lon2) {
-      function toRad(x) { return x * Math.PI / 180; }
-      const R = 6371; // Earth radius in kilometers
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLon/2) * Math.sin(dLon/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
+  }
+  
+  // --- Utility: Haversine Distance Calculation ---
+  function haversineDistance(lat1, lon1, lat2, lon2) {
+    function toRad(x) { return x * Math.PI / 180; }
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+  
+  // --- Utility: Point-to-Segment Distance (used to compute distance from site to fault trace) ---
+  function pointToSegmentDistance(lat, lon, lat1, lon1, lat2, lon2) {
+    function toRad(x) { return x * Math.PI / 180; }
+    const x0 = lon, y0 = lat;
+    const x1 = lon1, y1 = lat1;
+    const x2 = lon2, y2 = lat2;
+    const A = x0 - x1, B = y0 - y1, C = x2 - x1, D = y2 - y1;
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = (lenSq !== 0) ? dot / lenSq : -1;
+    let xx, yy;
+    if (param < 0) { xx = x1; yy = y1; }
+    else if (param > 1) { xx = x2; yy = y2; }
+    else { xx = x1 + param * C; yy = y1 + param * D; }
+    return haversineDistance(lat, lon, yy, xx);
+  }
+  
+  // --- Utility: Minimum Distance from Site to Fault Trace ---
+  function distanceToFault(site, fault) {
+    let minDist = Infinity;
+    if (!fault.geometry || !fault.geometry.coordinates) return null;
+    const coords = fault.geometry.coordinates; // Array of [lon, lat]
+    for (let i = 0; i < coords.length - 1; i++) {
+      let d = pointToSegmentDistance(site.lat, site.lon,
+                                      coords[i][1], coords[i][0],
+                                      coords[i+1][1], coords[i+1][0]);
+      if (d < minDist) minDist = d;
     }
-    
-    // --- Utility: Point to Line Segment Distance ---
-    function pointToSegmentDistance(lat, lon, lat1, lon1, lat2, lon2) {
-      function toRad(x) { return x * Math.PI / 180; }
-      const x0 = lon, y0 = lat;
-      const x1 = lon1, y1 = lat1;
-      const x2 = lon2, y2 = lat2;
-      const A = x0 - x1;
-      const B = y0 - y1;
-      const C = x2 - x1;
-      const D = y2 - y1;
-      const dot = A * C + B * D;
-      const lenSq = C * C + D * D;
-      let param = (lenSq !== 0) ? dot / lenSq : -1;
-      let xx, yy;
-      if (param < 0) { xx = x1; yy = y1; }
-      else if (param > 1) { xx = x2; yy = y2; }
-      else { xx = x1 + param * C; yy = y1 + param * D; }
-      return haversineDistance(lat, lon, yy, xx);
+    return minDist;
+  }
+  
+  // --- Hazard Calculation at a Site ---
+  // For each fault, iterate over all slip rate alternatives (weighted) and combine with activity probability.
+  function calculateHazardAtSite(site, catalogParams) {
+    let totalPGA = 0;
+    let totalAnnualRate = 0;
+    faults.forEach(fault => {
+      let dist = distanceToFault(site, fault) || 10;
+      let magnitude = 7.0;  // For demonstration, we use a fixed magnitude
+      let faultHazard = 0;
+      fault.slipRates.forEach(sr => {
+        let gmpeVal = gmpeFunctions['ngaW'](magnitude, dist, sr.value, fault.dip);
+        // Annual rate for this branch (using USGS catalog recurrence scaling)
+        let annualRate = catalogParams.recurrenceFactor * Math.pow(10, -catalogParams.bValue * magnitude) * sr.weight;
+        faultHazard += gmpeVal * annualRate;
+      });
+      faultHazard *= fault.activityProb;
+      totalPGA += faultHazard;
+      totalAnnualRate += catalogParams.recurrenceFactor * Math.pow(10, -catalogParams.bValue * magnitude) * fault.activityProb;
+    });
+    return { medianPGA: totalPGA, annualRate: totalAnnualRate };
+  }
+  
+  /***********************
+   * 5. Hazard Curve & Output Table Generation
+   *
+   * We assume a lognormal hazard curve with median = totalPGA and a fixed dispersion (sigma).
+   * The curve is generated for a range of PGA thresholds.
+   * We also (approximately) invert the curve for return periods of 1k, 2.5k, 5k, and 10k years.
+   ***********************/
+  // Error function approximation
+  function erf(x) {
+    let sign = (x >= 0) ? 1 : -1;
+    x = Math.abs(x);
+    let a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+    let t = 1.0 / (1.0 + p * x);
+    let y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+    return sign * y;
+  }
+  
+  // Generate hazard curve data for a site
+  function generateHazardCurve(medianPGA, annualRate, sigma = 0.6) {
+    let xVals = [], lambdaVals = [];
+    for (let i = -2; i <= 2; i += 0.1) {
+      let x = medianPGA * Math.exp(i);
+      xVals.push(x);
+      let z = (Math.log(x) - Math.log(medianPGA)) / sigma;
+      let cdf = 0.5 * (1 + erf(z / Math.sqrt(2)));
+      let lambda = annualRate * (1 - cdf);
+      lambdaVals.push(lambda);
     }
-    
-    // --- Utility: Distance from Site to Fault (minimum distance to fault trace) ---
-    function distanceToFault(site, fault) {
-      let minDist = Infinity;
-      if (!fault.geometry || !fault.geometry.coordinates) return null;
-      const coords = fault.geometry.coordinates; // Array of [lon, lat]
-      for (let i = 0; i < coords.length - 1; i++) {
-        let segDist = pointToSegmentDistance(site.lat, site.lon, coords[i][1], coords[i][0], coords[i+1][1], coords[i+1][0]);
-        if (segDist < minDist) minDist = segDist;
+    return { x: xVals, lambda: lambdaVals };
+  }
+  
+  // Invert hazard curve (approximate) to obtain PGA for a target annual rate (1/T)
+  function getPGAForReturnPeriod(curve, T) {
+    let targetRate = 1 / T;
+    for (let i = 0; i < curve.lambda.length - 1; i++) {
+      if ((curve.lambda[i] >= targetRate && curve.lambda[i+1] <= targetRate) ||
+          (curve.lambda[i] <= targetRate && curve.lambda[i+1] >= targetRate)) {
+        let frac = (targetRate - curve.lambda[i]) / (curve.lambda[i+1] - curve.lambda[i]);
+        let logPGA = Math.log(curve.x[i]) + frac * (Math.log(curve.x[i+1]) - Math.log(curve.x[i]));
+        return Math.exp(logPGA);
       }
-      return minDist;
     }
+    return null;
+  }
+  
+  // Display hazard results: text output, output table, and hazard curves (via Chart.js)
+  function displayHazardResults() {
+    let hazardOutput = "";
+    let hazardTableHTML = "<table><tr><th>Site</th><th>1k (PGA g)</th><th>2.5k (PGA g)</th><th>5k (PGA g)</th><th>10k (PGA g)</th></tr>";
+    let hazardCurvesDiv = document.getElementById('hazardCurvesDiv');
+    hazardCurvesDiv.innerHTML = "";
     
-    // --- PSHA Calculation for Sites ---
-    function calculatePSHAForSites(sourceModel, gmpeFunc, catalogParams, sites) {
-      let results = "";
-      if (!sourceModel || !sourceModel.faults) {
-        return "Invalid logic tree JSON. Please check your file.";
-      }
-      if (sites.length === 0) {
-        return "No sites selected. Please add sites using one of the methods.";
-      }
-      sites.forEach(function(site) {
-        results += "Site: " + site.name + " (Lat: " + site.lat + ", Lon: " + site.lon + ")\n";
-        sourceModel.faults.forEach(function(fault) {
-          let distance = distanceToFault(site, fault);
-          if (distance === null) distance = 10; // default distance if not available
-          // Use average slip rate from fault (if available)
-          let slipRate = 1;
-          if (fault.slipRate && fault.slipRate.min !== null && fault.slipRate.max !== null) {
-            slipRate = (fault.slipRate.min + fault.slipRate.max) / 2;
+    sites.forEach((site, idx) => {
+      let { medianPGA, annualRate } = calculateHazardAtSite(site, currentCatalogParams);
+      hazardOutput += "Site: " + site.name + " | Median PGA: " + medianPGA.toFixed(4) + " g, Annual Rate: " + annualRate.toExponential(2) + "\n";
+      
+      let curve = generateHazardCurve(medianPGA, annualRate);
+      let pga1k = getPGAForReturnPeriod(curve, 1000) || 0;
+      let pga2_5k = getPGAForReturnPeriod(curve, 2500) || 0;
+      let pga5k = getPGAForReturnPeriod(curve, 5000) || 0;
+      let pga10k = getPGAForReturnPeriod(curve, 10000) || 0;
+      hazardTableHTML += "<tr><td>" + site.name + "</td><td>" + pga1k.toFixed(4) + "</td><td>" + pga2_5k.toFixed(4) + "</td><td>" + pga5k.toFixed(4) + "</td><td>" + pga10k.toFixed(4) + "</td></tr>";
+      
+      // Create a canvas for the hazard curve plot
+      let canvasId = "chart_" + idx;
+      let canvas = document.createElement('canvas');
+      canvas.id = canvasId;
+      let chartContainer = document.createElement('div');
+      chartContainer.className = "chart-container";
+      chartContainer.appendChild(canvas);
+      hazardCurvesDiv.appendChild(chartContainer);
+      
+      new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: curve.x.map(x => x.toFixed(3)),
+          datasets: [{
+            label: "Hazard Curve (" + site.name + ")",
+            data: curve.lambda,
+            borderColor: 'blue',
+            fill: false,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          scales: {
+            x: {
+              type: 'linear',
+              title: { display: true, text: 'PGA (g)' }
+            },
+            y: {
+              type: 'logarithmic',
+              title: { display: true, text: 'Annual Exceedance Rate' }
+            }
           }
-          // Use default magnitude (or derive from slip rate if desired)
-          let magnitude = 7.0;
-          const groundMotion = gmpeFunc(magnitude, distance, slipRate);
-          const annualRate = catalogParams.recurrenceFactor * Math.pow(10, -catalogParams.bValue * magnitude);
-          results += "  Fault: " + fault.name + "\n";
-          results += "    Magnitude: " + magnitude.toFixed(2) + "\n";
-          results += "    Distance: " + distance.toFixed(2) + " km\n";
-          results += "    Slip Rate: " + slipRate.toFixed(2) + " mm/yr\n";
-          results += "    Dip: " + (fault.dip.angle || "N/A") + "°, Direction: " + (fault.dip.direction || "N/A") + "\n";
-          results += "    GMPE (" + gmpeFunc.name + ") Ground Motion: " + groundMotion.toFixed(4) + " g\n";
-          results += "    Annual Occurrence Rate: " + annualRate.toExponential(2) + "\n";
-        });
-        results += "\n";
-      });
-      return results;
-    }
-    
-    // --- Handler for the "Calculate PSHA" button ---
-    document.getElementById('calculateBtn').addEventListener('click', function() {
-      if (!sourceModel) {
-        document.getElementById('resultText').textContent = "Please load a logic tree JSON file first.";
-        return;
-      }
-      const selectedGMPE = document.getElementById('gmpeSelect').value;
-      const selectedCatalog = document.getElementById('catalogSelect').value;
-      const gmpeFunc = gmpeFunctions[selectedGMPE];
-      // Get catalog parameters from the USGS feed
-      getCatalogParameters(selectedCatalog).then(catalogParams => {
-        const results = calculatePSHAForSites(sourceModel, gmpeFunc, catalogParams, sites);
-        document.getElementById('resultText').textContent = results;
+        }
       });
     });
-  </script>
+    
+    hazardTableHTML += "</table>";
+    document.getElementById('resultText').textContent = hazardOutput;
+    document.getElementById('hazardTableDiv').innerHTML = hazardTableHTML;
+  }
+  
+  // --- Calculate Hazard when the "Calculate PSHA" button is clicked ---
+  document.getElementById('calculateBtn').addEventListener('click', function() {
+    if (!sourceModel) {
+      document.getElementById('resultText').textContent = "Please load a logic tree JSON file first.";
+      return;
+    }
+    getCatalogParameters(document.getElementById('catalogSelect').value).then(params => {
+      currentCatalogParams = params;
+      displayHazardResults();
+    });
+  });
+  
+</script>
+
+<!--
+  Further improvements to make this a more useful tool might include:
+   • A more rigorous PSHA integration algorithm (with magnitude–distance distributions, rupture models, etc.)
+   • Improved handling and propagation of uncertainties (e.g., Monte Carlo simulation)
+   • User-friendly input forms for GMPE parameters and spectral acceleration definitions
+   • Interactive map features (e.g., zoom, layer toggling, detailed popups)
+   • Export options for hazard curves and tables
+   • Better inversion methods for hazard curves and robust statistical analysis
+   • Enhanced UI/UX using a modern framework (e.g., React, Vue) and CSS styling
+-->
 </body>
 </html>
