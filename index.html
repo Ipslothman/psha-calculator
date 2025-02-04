@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Advanced Browser-based PSHA Calculator</title>
+  <title>Advanced Browser-based PSHA Calculator (Debug Version)</title>
   <!-- Leaflet CSS for mapping -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -19,16 +19,16 @@
 </head>
 <body>
 <div class="container">
-  <h1>Advanced Probabilistic Seismic Hazard Analysis (PSHA)</h1>
+  <h1>Advanced PSHA Calculator (Debug Version)</h1>
   <p>
-    Load a logic tree JSON (source model), choose a GMPE and USGS seismicity catalog (NSHM 2023 versions), adjust GMPE parameters and spectral acceleration definitions, and specify sites.
+    Load a logic tree JSON, choose GMPE parameters and a USGS seismicity catalog (NSHM 2023 style), then add sites.
   </p>
   
-  <!-- 1. Logic Tree JSON Input -->
+  <!-- Logic Tree JSON Input -->
   <label for="sourceModelFile">Logic Tree JSON File:</label><br>
   <input type="file" id="sourceModelFile" accept=".json"><br><br>
   
-  <!-- 2. GMPE & Catalog Selections -->
+  <!-- GMPE & Catalog Selections -->
   <label for="gmpeSelect">Select GMPE:</label><br>
   <select id="gmpeSelect">
     <option value="ngaW">NGA-West (Simplified)</option>
@@ -36,19 +36,16 @@
   
   <label for="catalogSelect">Select Seismicity Catalog (NSHM 2023):</label><br>
   <select id="catalogSelect">
-    <!-- Updated feeds similar to 2023 NSHM -->
     <option value="nshm2023_1">NSHM 2023 v1 – USGS All-Month</option>
     <option value="nshm2023_2">NSHM 2023 v2 – USGS 4.5+ Week</option>
   </select><br><br>
   
-  <!-- Monte Carlo Iterations -->
-  <label for="numSimInput">Number of Monte Carlo Iterations:</label>
-  <input type="number" id="numSimInput" value="1000" min="100" step="100"><br><br>
+  <label for="numSimInput">Monte Carlo Iterations:</label>
+  <input type="number" id="numSimInput" value="500" min="100" step="100"><br><br>
   
-  <!-- 3. GMPE Parameter Panel -->
+  <!-- GMPE Parameter Panel -->
   <div class="parameter-panel">
     <h3>GMPE Parameters (NGA-West)</h3>
-    <!-- Revised default values for lower PGA predictions -->
     <label for="gmpe_a">Coefficient a:</label>
     <input type="number" id="gmpe_a" value="-3.0" step="0.1"><br>
     <label for="gmpe_b">Coefficient b:</label>
@@ -59,27 +56,27 @@
     <input type="number" id="gmpe_d" value="0.5" step="0.1"><br>
   </div>
   
-  <!-- 4. Spectral Acceleration Definitions -->
+  <!-- Spectral Acceleration Panel (not used in current calc) -->
   <div class="parameter-panel">
     <h3>Spectral Accelerations (g)</h3>
-    <p>Define additional spectral acceleration values (comma-separated)</p>
+    <p>Enter spectral acceleration values (comma-separated)</p>
     <input type="text" id="saValues" placeholder="e.g., 0.1, 0.2, 0.3" style="width: 300px;">
   </div>
   
-  <!-- 5. Site Selection -->
+  <!-- Site Selection -->
   <h2>Site Selection</h2>
-  <p>Select a method to specify sites:</p>
-  <label><input type="radio" name="siteMethod" value="shapefile" checked> Import Shapefile (zipped)</label><br>
+  <p>Select a method:</p>
+  <label><input type="radio" name="siteMethod" value="shapefile" checked> Import Shapefile (ZIP)</label><br>
   <label><input type="radio" name="siteMethod" value="manual"> Manual Entry</label><br>
   <label><input type="radio" name="siteMethod" value="search"> Search Address</label><br><br>
   
-  <!-- Div for Shapefile Input -->
+  <!-- Shapefile Input -->
   <div id="siteShapefileDiv">
     <label for="siteShapefile">Select Shapefile (ZIP):</label><br>
     <input type="file" id="siteShapefile" accept=".zip"><br><br>
   </div>
   
-  <!-- Div for Manual Entry -->
+  <!-- Manual Entry -->
   <div id="siteManualDiv" style="display: none;">
     <h3>Manual Site Entry</h3>
     <table id="siteTable">
@@ -97,7 +94,7 @@
     <button id="addSiteBtn">Add Site</button><br><br>
   </div>
   
-  <!-- Div for Address Search -->
+  <!-- Address Search -->
   <div id="siteSearchDiv" style="display: none;">
     <h3>Search Address</h3>
     <input type="text" id="addressInput" placeholder="Enter address or location">
@@ -122,20 +119,18 @@
   <div id="map"></div>
 </div>
 
-<!-- Include Leaflet JS for mapping -->
+<!-- Leaflet JS, Chart.js, and shp.js -->
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<!-- Include Chart.js for plotting hazard curves -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<!-- Include shp.js for shapefile processing -->
 <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
 
 <script>
 /***********************
  * Global Variables
  ***********************/
-let sourceModel = null;   // Parsed logic tree JSON
-let sites = [];           // Array of site objects: { name, lat, lon, selected }
-let faults = [];          // Parsed faults from logic tree JSON
+let sourceModel = null;   // Parsed JSON
+let sites = [];           // {name, lat, lon, selected}
+let faults = [];          // Parsed faults from JSON
 let currentCatalogParams = { bValue: 1.0, recurrenceFactor: 1.0 };
 
 /***********************
@@ -144,10 +139,10 @@ let currentCatalogParams = { bValue: 1.0, recurrenceFactor: 1.0 };
 function parseFault(fault) {
   let faultObj = {
     name: fault.name,
-    geometry: fault.geometry,  // Expected to be a LineString
+    geometry: fault.geometry,
     activityProb: 1,
-    slipRates: [],  // Array of { value, uncertainty, weight }
-    dip: null       // { angle, direction, weight }
+    slipRates: [],
+    dip: null
   };
   let activeWeight = 0, inactiveWeight = 0;
   fault.children.forEach(child => {
@@ -193,13 +188,13 @@ document.getElementById('sourceModelFile').addEventListener('change', function(e
         });
         rawData.faults = faults;
         sourceModel = rawData;
-        document.getElementById('resultText').textContent = "Loaded logic tree JSON with " + faults.length + " faults.\n";
+        document.getElementById('resultText').textContent = "Loaded JSON with " + faults.length + " faults.\n";
         plotFaultsOnMap();
       } else {
-        document.getElementById('resultText').textContent = "Invalid JSON structure: Missing 'children' array.";
+        document.getElementById('resultText').textContent = "Invalid JSON: missing 'children' array.";
       }
-    } catch (error) {
-      document.getElementById('resultText').textContent = "Error parsing JSON: " + error;
+    } catch(err) {
+      document.getElementById('resultText').textContent = "Error parsing JSON: " + err;
     }
   };
   reader.readAsText(file);
@@ -209,8 +204,8 @@ document.getElementById('sourceModelFile').addEventListener('change', function(e
  * 2. Site Selection UI & Functions
  ***********************/
 const siteMethodRadios = document.getElementsByName('siteMethod');
-siteMethodRadios.forEach(radio => {
-  radio.addEventListener('change', updateSiteMethodDisplay);
+siteMethodRadios.forEach(r => {
+  r.addEventListener('change', updateSiteMethodDisplay);
 });
 function updateSiteMethodDisplay() {
   const method = document.querySelector('input[name="siteMethod"]:checked').value;
@@ -232,7 +227,7 @@ function updateSiteTable() {
   tbody.innerHTML = "";
   sites.forEach((site, index) => {
     let row = tbody.insertRow();
-    // Checkbox cell
+    // Checkbox
     let cellCheckbox = row.insertCell(0);
     let checkbox = document.createElement('input');
     checkbox.type = "checkbox";
@@ -241,17 +236,17 @@ function updateSiteTable() {
       site.selected = checkbox.checked;
     });
     cellCheckbox.appendChild(checkbox);
-    // Site name cell
+    // Site Name
     let cellName = row.insertCell(1);
     cellName.textContent = site.name;
-    // Latitude cell
+    // Latitude
     let cellLat = row.insertCell(2);
     cellLat.textContent = site.lat;
-    // Longitude cell
+    // Longitude
     let cellLon = row.insertCell(3);
     cellLon.textContent = site.lon;
-    // Delete cell
-    let cellDelete = row.insertCell(4);
+    // Delete Button
+    let cellDel = row.insertCell(4);
     let delBtn = document.createElement('button');
     delBtn.textContent = "Delete";
     delBtn.addEventListener('click', function() {
@@ -259,11 +254,11 @@ function updateSiteTable() {
       updateSiteTable();
       plotSitesOnMap();
     });
-    cellDelete.appendChild(delBtn);
+    cellDel.appendChild(delBtn);
   });
 }
 
-// 2a. Shapefile Import using shp.js
+// 2a. Shapefile Import (using shp.js)
 document.getElementById('siteShapefile').addEventListener('change', function(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -278,12 +273,12 @@ document.getElementById('siteShapefile').addEventListener('change', function(e) 
             addSite({ name: feature.properties.NAME || "Unnamed", lat: coords[1], lon: coords[0] });
           }
         });
-        document.getElementById('resultText').textContent += "Imported " + geojson.features.length + " site(s) from shapefile.\n";
+        document.getElementById('resultText').textContent += "Imported " + geojson.features.length + " site(s).\n";
       } else {
-        document.getElementById('resultText').textContent += "No point features found in shapefile.\n";
+        document.getElementById('resultText').textContent += "No point features in shapefile.\n";
       }
-    }).catch(error => {
-      document.getElementById('resultText').textContent += "Error processing shapefile: " + error + "\n";
+    }).catch(err => {
+      document.getElementById('resultText').textContent += "Error processing shapefile: " + err + "\n";
     });
   };
   reader.readAsArrayBuffer(file);
@@ -295,11 +290,11 @@ document.getElementById('addSiteBtn').addEventListener('click', function() {
   if (!name) return;
   const lat = parseFloat(prompt("Enter Latitude:"));
   const lon = parseFloat(prompt("Enter Longitude:"));
-  if (isNaN(lat) || isNaN(lon)) { alert("Invalid latitude or longitude."); return; }
+  if (isNaN(lat) || isNaN(lon)) { alert("Invalid coordinates."); return; }
   addSite({ name: name, lat: lat, lon: lon });
 });
   
-// 2c. Address Search (allows multiple addresses)
+// 2c. Address Search
 document.getElementById('searchAddressBtn').addEventListener('click', function() {
   const address = document.getElementById('addressInput').value;
   if (!address) return;
@@ -311,18 +306,20 @@ document.getElementById('searchAddressBtn').addEventListener('click', function()
       if (data.length === 0) { resultsDiv.textContent = "No results found."; return; }
       const list = document.createElement('ul');
       data.forEach(result => {
-        const item = document.createElement('li');
+        let item = document.createElement('li');
         item.textContent = result.display_name + " (Lat: " + result.lat + ", Lon: " + result.lon + ")";
         item.style.cursor = "pointer";
         item.addEventListener('click', function() {
           addSite({ name: result.display_name, lat: parseFloat(result.lat), lon: parseFloat(result.lon) });
-          resultsDiv.innerHTML += "Added site: " + result.display_name + "<br>";
+          resultsDiv.innerHTML += "Added: " + result.display_name + "<br>";
         });
         list.appendChild(item);
       });
       resultsDiv.appendChild(list);
     })
-    .catch(error => { document.getElementById('searchResults').textContent = "Error: " + error; });
+    .catch(err => {
+      document.getElementById('searchResults').textContent = "Error: " + err;
+    });
 });
   
 /***********************
@@ -335,7 +332,7 @@ L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapSe
 let faultLayer = L.layerGroup().addTo(map);
 let siteLayer = L.layerGroup().addTo(map);
 L.control.layers(null, { "Faults": faultLayer, "Sites": siteLayer }).addTo(map);
-  
+
 function plotFaultsOnMap() {
   faultLayer.clearLayers();
   faults.forEach(fault => {
@@ -346,7 +343,7 @@ function plotFaultsOnMap() {
     }
   });
 }
-  
+
 function plotSitesOnMap() {
   siteLayer.clearLayers();
   sites.forEach(site => {
@@ -358,7 +355,7 @@ function plotSitesOnMap() {
 }
   
 /***********************
- * 4. Hazard Calculations via Monte Carlo Simulation
+ * 4. Hazard Calculations (Monte Carlo)
  ***********************/
 function sampleNormal(mean, std) {
   let u1 = Math.random(), u2 = Math.random();
@@ -366,7 +363,7 @@ function sampleNormal(mean, std) {
   return mean + z0 * std;
 }
   
-// Revised NGA-West GMPE using user-set coefficients and a +30 distance offset
+// Simplified NGA-West GMPE using user coefficients and +30 distance offset
 function ngaW(magnitude, distance, slipRate, dip) {
   const a = parseFloat(document.getElementById('gmpe_a').value);
   const b = parseFloat(document.getElementById('gmpe_b').value);
@@ -376,24 +373,22 @@ function ngaW(magnitude, distance, slipRate, dip) {
   if (dip && dip.angle) {
     gmpeVal *= (1 + 0.01 * (90 - dip.angle));
   }
-  return gmpeVal;  // in g
+  return gmpeVal; // in g
 }
 const gmpeFunctions = { ngaW: ngaW };
   
-// Utility: Haversine Distance Calculation
+// Haversine Distance
 function haversineDistance(lat1, lon1, lat2, lon2) {
   function toRad(x) { return x * Math.PI / 180; }
   const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-            Math.sin(dLon/2) * Math.sin(dLon/2);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
   
-// Utility: Point-to-Segment Distance
+// Point-to-Segment Distance
 function pointToSegmentDistance(lat, lon, lat1, lon1, lat2, lon2) {
   function toRad(x) { return x * Math.PI / 180; }
   const x0 = lon, y0 = lat;
@@ -410,7 +405,7 @@ function pointToSegmentDistance(lat, lon, lat1, lon1, lat2, lon2) {
   return haversineDistance(lat, lon, yy, xx);
 }
   
-// Utility: Minimum Distance from Site to Fault Trace
+// Minimum Distance from Site to Fault Trace
 function distanceToFault(site, fault) {
   let minDist = Infinity;
   if (!fault.geometry || !fault.geometry.coordinates) return null;
@@ -424,30 +419,30 @@ function distanceToFault(site, fault) {
   return minDist;
 }
   
-// Monte Carlo simulation for hazard at a site
+// Monte Carlo hazard simulation for one site
 function calculateHazardAtSiteMonteCarlo(site, catalogParams, numSim) {
   let simPGAs = [];
   let simAnnualRates = [];
-  for (let sim = 0; sim < numSim; sim++) {
+  for (let i = 0; i < numSim; i++) {
     let totalPGA = 0;
     let totalAnnualRate = 0;
     faults.forEach(fault => {
       let dist = distanceToFault(site, fault) || 10;
-      let magnitude = 7.0;  // fixed for demonstration
-      // Weighted random selection among slip rate alternatives:
-      let cumulativeWeight = fault.slipRates.reduce((sum, sr) => sum + sr.weight, 0);
-      let r = Math.random() * cumulativeWeight;
+      let magnitude = 7.0; // fixed for now
+      // Weighted selection among slip rate alternatives
+      let totalWeight = fault.slipRates.reduce((sum, sr) => sum + sr.weight, 0);
+      let r = Math.random() * totalWeight;
       let chosen = fault.slipRates[0];
       let cum = 0;
       fault.slipRates.forEach(sr => {
         cum += sr.weight;
         if (r <= cum) chosen = sr;
       });
-      // Sample a slip rate from a normal distribution
-      let sampledSlipRate = sampleNormal(chosen.value, chosen.uncertainty);
-      if (sampledSlipRate < 0) sampledSlipRate = 0;
-      let gmpeVal = gmpeFunctions['ngaW'](magnitude, dist, sampledSlipRate, fault.dip);
-      // Recurrence: annual rate ~ recurrenceFactor * 10^(-b*magnitude)
+      // Sample slip rate from a normal distribution
+      let sampledSlip = sampleNormal(chosen.value, chosen.uncertainty);
+      if (sampledSlip < 0) sampledSlip = 0;
+      let gmpeVal = gmpeFunctions['ngaW'](magnitude, dist, sampledSlip, fault.dip);
+      // Recurrence: annualRate ~ recurrenceFactor * 10^(-b*magnitude)
       let annualRate = catalogParams.recurrenceFactor * Math.pow(10, -catalogParams.bValue * magnitude);
       totalPGA += gmpeVal * fault.activityProb;
       totalAnnualRate += annualRate * fault.activityProb;
@@ -458,16 +453,15 @@ function calculateHazardAtSiteMonteCarlo(site, catalogParams, numSim) {
   simPGAs.sort((a, b) => a - b);
   let medianPGA = simPGAs[Math.floor(numSim/2)];
   let avgAnnualRate = simAnnualRates.reduce((a, b) => a + b, 0) / numSim;
-  return { medianPGA: medianPGA, annualRate: avgAnnualRate };
+  console.log("Site:", site.name, "Median PGA:", medianPGA, "Avg Annual Rate:", avgAnnualRate);
+  return { medianPGA, annualRate: avgAnnualRate };
 }
   
 /***********************
- * Inverse Normal Function (Acklam's approximation)
+ * Inverse Normal Function (for hazard inversion)
  ***********************/
 function normsinv(p) {
-  if (p <= 0 || p >= 1) {
-    throw new Error("The probability p must be between 0 and 1");
-  }
+  if (p <= 0 || p >= 1) throw new Error("p must be in (0,1)");
   const a1 = -39.69683028665376, a2 = 220.9460984245205, a3 = -275.9285104469687,
         a4 = 138.3577518672690, a5 = -30.66479806614716, a6 = 2.506628277459239;
   const b1 = -54.47609879822406, b2 = 161.5858368580409, b3 = -155.6989798598866,
@@ -494,28 +488,22 @@ function normsinv(p) {
 }
   
 /***********************
- * 5. Hazard Curve Generation by Return Period
- * 
- * For a lognormal hazard curve, the probability that PGA exceeds x is:
- *   P(X > x) = 1 - Phi((ln(x) - ln(medianPGA))/sigma)
- * With an annual rate lambda, the target annual exceedance rate is p = 1/T.
- * Inverting: ln(PGA) = ln(medianPGA) + sigma * normsinv(1 - (1/(T*annualRate)) )
+ * Hazard Curve Generation (Return Period vs. PGA)
+ * We generate a series of target return periods from 10 to 1e5 years.
  ***********************/
 function getPGAForTargetT(medianPGA, annualRate, sigma, T) {
   let p_exceed = 1 / T;
-  // If the target exceedance probability is higher than the model annual rate, return median as fallback
+  // If target exceedance is above the annual rate, return median PGA as fallback
   if (p_exceed > annualRate) return medianPGA;
   let p = 1 - (p_exceed / annualRate);
   let z = normsinv(p);
   return Math.exp(Math.log(medianPGA) + sigma * z);
 }
   
-// Generate hazard curve: return periods from T_min to 1e5 years
 function generateHazardCurveReturnPeriod(medianPGA, annualRate, sigma = 0.6) {
   let T_vals = [];
   let PGA_vals = [];
-  // Set minimum T as max(1/annualRate, 10) to avoid unrealistic low return periods
-  let T_min = Math.max(1 / annualRate, 10);
+  let T_min = Math.max(10, 1 / annualRate);  // at least 10 years
   let T_max = 1e5;
   let numPoints = 50;
   for (let i = 0; i < numPoints; i++) {
@@ -526,34 +514,32 @@ function generateHazardCurveReturnPeriod(medianPGA, annualRate, sigma = 0.6) {
   return { T: T_vals, PGA: PGA_vals };
 }
   
-// Display hazard results: output table and hazard curve plots
+/***********************
+ * Display Hazard Results: Output Table & Hazard Curves
+ ***********************/
 function displayHazardResults(numSim) {
   let hazardOutput = "";
   let hazardTableHTML = "<table><tr><th>Site</th><th>1k (PGA g)</th><th>2.5k (PGA g)</th><th>5k (PGA g)</th><th>10k (PGA g)</th></tr>";
   let hazardCurvesDiv = document.getElementById('hazardCurvesDiv');
   hazardCurvesDiv.innerHTML = "";
   
-  // Fixed sigma (lognormal dispersion)
   let sigma = 0.6;
-  // Target return periods for output table
-  let targetTs = [1000, 2500, 5000, 10000];
+  let targetReturnPeriods = [1000, 2500, 5000, 10000];
   
   sites.forEach((site, idx) => {
     if (!site.selected) return;
     let { medianPGA, annualRate } = calculateHazardAtSiteMonteCarlo(site, currentCatalogParams, numSim);
     hazardOutput += "Site: " + site.name + " | Median PGA: " + medianPGA.toFixed(4) + " g, Annual Rate: " + annualRate.toExponential(2) + "\n";
     
-    // Build the output table row for this site
     hazardTableHTML += "<tr><td>" + site.name + "</td>";
-    targetTs.forEach(T => {
+    targetReturnPeriods.forEach(T => {
       let pga = getPGAForTargetT(medianPGA, annualRate, sigma, T);
       hazardTableHTML += "<td>" + pga.toFixed(4) + "</td>";
     });
     hazardTableHTML += "</tr>";
     
-    // Generate hazard curve data (with return period T on x-axis)
+    // Generate hazard curve data (return period vs. PGA)
     let curve = generateHazardCurveReturnPeriod(medianPGA, annualRate, sigma);
-    // Plot using Chart.js: x-axis = T (log scale), y-axis = PGA
     let canvasId = "chart_" + idx;
     let canvas = document.createElement('canvas');
     canvas.id = canvasId;
@@ -603,10 +589,8 @@ function getCatalogParameters(catalogValue) {
   return new Promise((resolve, reject) => {
     let url;
     if (catalogValue === "nshm2023_1") {
-      // NSHM 2023 v1 – USGS All-Month feed
       url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson";
     } else if (catalogValue === "nshm2023_2") {
-      // NSHM 2023 v2 – USGS 4.5+ Week feed
       url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson";
     } else {
       resolve({ bValue: 1.0, recurrenceFactor: 1.0 });
@@ -616,7 +600,7 @@ function getCatalogParameters(catalogValue) {
       .then(response => response.json())
       .then(data => {
         let count = data.metadata.count;
-        // Adjust scaling: use count/10000 for moderate recurrence rates
+        // Use count/10000 as recurrence scaling
         resolve({ bValue: 1.0, recurrenceFactor: count / 10000 });
       })
       .catch(err => { resolve({ bValue: 1.0, recurrenceFactor: 1.0 }); });
@@ -627,10 +611,8 @@ function getCatalogParameters(catalogValue) {
  * 7. Export Results as CSV
  ***********************/
 document.getElementById('exportBtn').addEventListener('click', function() {
-  let tableHTML = document.getElementById('hazardTableDiv').innerHTML;
-  if (!tableHTML) { alert("No hazard table available!"); return; }
-  let csv = [];
   let rows = document.querySelectorAll("#hazardTableDiv table tr");
+  let csv = [];
   rows.forEach(row => {
     let cols = row.querySelectorAll("td, th");
     let rowData = [];
@@ -668,13 +650,11 @@ document.getElementById('calculateBtn').addEventListener('click', function() {
 </script>
 
 <!--
-  Further improvements that could be incorporated:
-  • Incorporating full magnitude–frequency distributions and improved attenuation relationships.
-  • Advanced Monte Carlo sampling (e.g., Latin Hypercube) for uncertainty propagation.
-  • Detailed site-specific soil, spectral acceleration, and site response parameters.
-  • Enhanced interactive UI using modern frameworks and refined styling.
-  • Robust statistical inversion of hazard curves and uncertainty quantification.
-  • Integration with dynamic external APIs for real-time updates.
+  Further improvements:
+  • Full magnitude–frequency integration and robust attenuation models.
+  • Advanced sampling (e.g., Latin Hypercube) for uncertainty propagation.
+  • Detailed site-response and spectral acceleration calculations.
+  • A modern UI framework for better interactivity.
 -->
 </body>
 </html>
